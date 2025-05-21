@@ -13,7 +13,7 @@ from telegram.ext import (
 import asyncio
 
 nest_asyncio.apply()
-TOKEN = "7934879470:AAE9FIp5kHBLhoT5x27sucUdFIc_IgbdB9Q"
+TOKEN = ("7934879470:AAE9FIp5kHBLhoT5x27sucUdFIc_IgbdB9Q")
 DB_FILE = "tasks.db"
 CHOOSE_ACTION, ADD_TASK, CHOOSE_TZ = range(3)
 logging.basicConfig(level=logging.INFO)
