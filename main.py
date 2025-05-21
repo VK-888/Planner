@@ -79,6 +79,7 @@ async def handle_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🌍 Выберите ваш часовой пояс:", reply_markup=InlineKeyboardMarkup(buttons))
         return CHOOSE_TZ
     else:
+        await update.message.reply_text("⚠️ Неизвестная команда.")
         return CHOOSE_ACTION
 
 async def handle_tz_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -97,7 +98,7 @@ async def add_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     now = datetime.now(tz)
     text = update.message.text.strip()
 
-    match = re.match(r"^(.*?) в (\\d{1,2}:\\d{2})(?: (\\d{2}-\\d{2}-\\d{4}))?$", text)
+    match = re.match(r"^(.*?) в (\d{1,2}:\d{2})(?: (\d{2}-\d{2}-\d{4}))?$", text)
     if not match:
         await update.message.reply_text("⚠️ Неверный формат. Пример: Сдать отчёт в 18:00 21-05-2025")
         return ADD_TASK
@@ -111,7 +112,7 @@ async def add_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
         repeat = "daily"
         task = task.replace("ежедневно", "").strip()
     else:
-        repeat_match = re.search(r"(каждый|каждую)\\s+([а-я]+)", task.lower())
+        repeat_match = re.search(r"(каждый|каждую)\s+([а-я]+)", task.lower())
         if repeat_match:
             weekdays = {
                 "понедельник": 0, "вторник": 1, "среда": 2,
@@ -122,7 +123,7 @@ async def add_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 repeat = day
                 days_ahead = (weekdays[day] - now.weekday() + 7) % 7 or 7
                 date_str = (now + timedelta(days=days_ahead)).strftime("%d-%m-%Y")
-                task = re.sub(rf"(каждый|каждую)\\s+{day}", "", task, flags=re.IGNORECASE).strip()
+                task = re.sub(rf"(каждый|каждую)\s+{day}", "", task, flags=re.IGNORECASE).strip()
 
     if date_str:
         try:
