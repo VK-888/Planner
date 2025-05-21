@@ -13,11 +13,9 @@ from telegram.ext import (
 import asyncio
 
 nest_asyncio.apply()
-
-TOKEN = "7934879470:AAE9FIp5kHBLhoT5x27sucUdFIc_IgbdB9Q"
+TOKEN = os.getenv("7934879470:AAE9FIp5kHBLhoT5x27sucUdFIc_IgbdB9Q")
 DB_FILE = "tasks.db"
 CHOOSE_ACTION, ADD_TASK, CHOOSE_TZ = range(3)
-
 logging.basicConfig(level=logging.INFO)
 
 def init_db():
@@ -42,7 +40,7 @@ def init_db():
             )
         """)
 
-def get_user_timezone(user_id: int):
+def get_user_timezone(user_id):
     with sqlite3.connect(DB_FILE) as conn:
         row = conn.execute("SELECT tz FROM users WHERE user_id = ?", (user_id,)).fetchone()
         return pytz.timezone(row[0]) if row else pytz.utc
@@ -66,21 +64,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     if text == "➕ Добавить задачу":
-        await update.message.reply_text("""✏️ Примеры:
-– Подать отчёт в 17:00 21-05-2025
-– Завтрак ежедневно в 08:00
-– Совещание каждый понедельник в 10:00""")
+        await update.message.reply_text("✏️ Пример: Сдать отчёт в 18:00 21-05-2025 или Завтрак ежедневно в 08:00")
         return ADD_TASK
     elif text == "📋 Список задач":
         return await list_tasks(update, context)
     elif text == "📊 Статистика":
         return await stats(update, context)
     elif text == "❓ Формат":
-        await update.message.reply_text("""📘 Формат задачи:
-– Задача в 18:00
-– Задача в 09:30 22-05-2025
-– Уборка каждый понедельник в 10:00
-– Завтрак ежедневно в 08:00""")
+        await update.message.reply_text("Примеры:\n– Сдать отчёт в 18:00\n– Завтрак ежедневно в 08:00\n– Встреча каждый понедельник в 10:00")
         return CHOOSE_ACTION
     elif text == "🌍 Установить часовой пояс":
         zones = ["Asia/Bishkek", "Europe/Moscow", "Asia/Almaty", "Asia/Tashkent"]
@@ -106,9 +97,9 @@ async def add_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     now = datetime.now(tz)
     text = update.message.text.strip()
 
-    match = re.match(r"^(.*?) в (\d{1,2}:\d{2})(?: (\d{2}-\d{2}-\d{4}))?$", text)
+    match = re.match(r"^(.*?) в (\\d{1,2}:\\d{2})(?: (\\d{2}-\\d{2}-\\d{4}))?$", text)
     if not match:
-        await update.message.reply_text("⚠️ Неверный формат. Пример: Подать отчёт в 17:00 18-05-2025")
+        await update.message.reply_text("⚠️ Неверный формат. Пример: Сдать отчёт в 18:00 21-05-2025")
         return ADD_TASK
 
     task = match.group(1).strip()
@@ -120,7 +111,7 @@ async def add_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
         repeat = "daily"
         task = task.replace("ежедневно", "").strip()
     else:
-        repeat_match = re.search(r"(каждый|каждую)\s+([а-я]+)", task.lower())
+        repeat_match = re.search(r"(каждый|каждую)\\s+([а-я]+)", task.lower())
         if repeat_match:
             weekdays = {
                 "понедельник": 0, "вторник": 1, "среда": 2,
@@ -131,7 +122,7 @@ async def add_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 repeat = day
                 days_ahead = (weekdays[day] - now.weekday() + 7) % 7 or 7
                 date_str = (now + timedelta(days=days_ahead)).strftime("%d-%m-%Y")
-                task = re.sub(r"(каждый|каждую)\s+" + day, "", task, flags=re.IGNORECASE).strip()
+                task = re.sub(rf"(каждый|каждую)\\s+{day}", "", task, flags=re.IGNORECASE).strip()
 
     if date_str:
         try:
@@ -211,28 +202,11 @@ async def notify_loop(app):
                     await app.bot.send_message(chat_id=user_id, text=f"⏰ Через 30 минут: {task}")
 
                 if rt <= now:
-                    if repeat:
-                        if repeat == "daily":
-                            next_time = rt + timedelta(days=1)
-                        else:
-                            weekdays = {
-                                "понедельник": 0, "вторник": 1, "среда": 2,
-                                "четверг": 3, "пятница": 4, "суббота": 5, "воскресенье": 6
-                            }
-                            target_wd = weekdays.get(repeat.lower())
-                            if target_wd is not None:
-                                days_ahead = (target_wd - now.weekday() + 7) % 7 or 7
-                                next_time = now + timedelta(days=days_ahead)
-                                next_time = next_time.replace(hour=rt.hour, minute=rt.minute)
-                            else:
-                                continue
-                        conn.execute("UPDATE tasks SET remind_time = ?, done = 0, notified_early = 0 WHERE id = ?", (next_time.isoformat(), id))
-                    else:
-                        kb = InlineKeyboardMarkup([
-                            [InlineKeyboardButton("✅ Завершить", callback_data=f"done_{id}")],
-                            [InlineKeyboardButton("❌ Удалить", callback_data=f"delete_{id}")]
-                        ])
-                        await app.bot.send_message(chat_id=user_id, text=f"🔔 Напоминание: {task}", reply_markup=kb)
+                    kb = InlineKeyboardMarkup([
+                        [InlineKeyboardButton("✅ Завершить", callback_data=f"done_{id}")],
+                        [InlineKeyboardButton("❌ Удалить", callback_data=f"delete_{id}")]
+                    ])
+                    await app.bot.send_message(chat_id=user_id, text=f"🔔 Напоминание: {task}", reply_markup=kb)
         await asyncio.sleep(30)
 
 async def main():
@@ -256,7 +230,4 @@ async def main():
     await app.run_polling()
 
 if __name__ == "__main__":
-    import asyncio
-    loop = asyncio.get_event_loop()
-    loop.create_task(main())
-    loop.run_forever()
+    asyncio.run(main())
