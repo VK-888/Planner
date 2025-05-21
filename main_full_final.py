@@ -1,6 +1,3 @@
-# ✅ Полный main.py
-# Поддерживает: задачи с датами, повторы, часовые пояса, напоминания, статистику, кнопки, многопользовательский режим
-
 import logging
 import sqlite3
 import re
@@ -16,9 +13,11 @@ from telegram.ext import (
 import asyncio
 
 nest_asyncio.apply()
-TOKEN = "7934879470:AAE9FIp5kHBLhoT5x27sucUdFIc_IgbdB9Q"
+
+TOKEN = os.getenv("7934879470:AAE9FIp5kHBLhoT5x27sucUdFIc_IgbdB9Q")
 DB_FILE = "tasks.db"
 CHOOSE_ACTION, ADD_TASK, CHOOSE_TZ = range(3)
+
 logging.basicConfig(level=logging.INFO)
 
 def init_db():
@@ -67,14 +66,21 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     if text == "➕ Добавить задачу":
-        await update.message.reply_text("✏️ Примеры:\n– Подать отчёт в 17:00 21-05-2025\n– Завтрак ежедневно в 08:00\n– Совещание каждый понедельник в 10:00")
+        await update.message.reply_text("""✏️ Примеры:
+– Подать отчёт в 17:00 21-05-2025
+– Завтрак ежедневно в 08:00
+– Совещание каждый понедельник в 10:00""")
         return ADD_TASK
     elif text == "📋 Список задач":
         return await list_tasks(update, context)
     elif text == "📊 Статистика":
         return await stats(update, context)
     elif text == "❓ Формат":
-        await update.message.reply_text("📘 Формат:\n– Задача в 18:00\n– Задача в 09:30 22-05-2025\n– Уборка каждый понедельник в 10:00\n– Завтрак ежедневно в 08:00")
+        await update.message.reply_text("""📘 Формат задачи:
+– Задача в 18:00
+– Задача в 09:30 22-05-2025
+– Уборка каждый понедельник в 10:00
+– Завтрак ежедневно в 08:00""")
         return CHOOSE_ACTION
     elif text == "🌍 Установить часовой пояс":
         zones = ["Asia/Bishkek", "Europe/Moscow", "Asia/Almaty", "Asia/Tashkent"]
@@ -149,3 +155,108 @@ async def add_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
                      (user_id, task, remind_time.isoformat(), repeat))
     await update.message.reply_text(f"✅ Задача добавлена: {task} — {remind_time.strftime('%d-%m-%Y %H:%M')}")
     return await start(update, context)
+
+async def list_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    tz = get_user_timezone(user_id)
+    with sqlite3.connect(DB_FILE) as conn:
+        rows = conn.execute("SELECT id, task, remind_time FROM tasks WHERE user_id = ? AND done = 0", (user_id,)).fetchall()
+    if not rows:
+        await update.message.reply_text("🎉 У тебя нет активных задач.")
+    else:
+        for id, task, rt_str in rows:
+            rt = datetime.fromisoformat(rt_str).astimezone(tz)
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ Завершить", callback_data=f"done_{id}"),
+                 InlineKeyboardButton("❌ Удалить", callback_data=f"delete_{id}")]
+            ])
+            await update.message.reply_text(f"{task} — {rt.strftime('%d-%m-%Y %H:%M')}", reply_markup=kb)
+    return await start(update, context)
+
+async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    with sqlite3.connect(DB_FILE) as conn:
+        total = conn.execute("SELECT COUNT(*) FROM tasks WHERE user_id = ?", (user_id,)).fetchone()[0]
+        done = conn.execute("SELECT COUNT(*) FROM tasks WHERE user_id = ? AND done = 1", (user_id,)).fetchone()[0]
+    await update.message.reply_text(f"📊 Выполнено: {done}, Всего: {total}, Активных: {total - done}")
+    return await start(update, context)
+
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    action, task_id = query.data.split("_")
+    task_id = int(task_id)
+    with sqlite3.connect(DB_FILE) as conn:
+        if action == "done":
+            conn.execute("UPDATE tasks SET done = 1 WHERE id = ?", (task_id,))
+            await query.edit_message_text("✅ Задача завершена.")
+        elif action == "delete":
+            conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+            await query.edit_message_text("❌ Задача удалена.")
+
+async def notify_loop(app):
+    while True:
+        with sqlite3.connect(DB_FILE) as conn:
+            rows = conn.execute("SELECT id, user_id, task, remind_time, repeat, notified_early, done FROM tasks").fetchall()
+            for id, user_id, task, rt_str, repeat, early, done in rows:
+                tz = get_user_timezone(user_id)
+                now = datetime.now(tz)
+                rt = datetime.fromisoformat(rt_str).astimezone(tz)
+
+                if done:
+                    continue
+
+                if early == 0 and now + timedelta(minutes=30) >= rt > now:
+                    conn.execute("UPDATE tasks SET notified_early = 1 WHERE id = ?", (id,))
+                    await app.bot.send_message(chat_id=user_id, text=f"⏰ Через 30 минут: {task}")
+
+                if rt <= now:
+                    if repeat:
+                        if repeat == "daily":
+                            next_time = rt + timedelta(days=1)
+                        else:
+                            weekdays = {
+                                "понедельник": 0, "вторник": 1, "среда": 2,
+                                "четверг": 3, "пятница": 4, "суббота": 5, "воскресенье": 6
+                            }
+                            target_wd = weekdays.get(repeat.lower())
+                            if target_wd is not None:
+                                days_ahead = (target_wd - now.weekday() + 7) % 7 or 7
+                                next_time = now + timedelta(days=days_ahead)
+                                next_time = next_time.replace(hour=rt.hour, minute=rt.minute)
+                            else:
+                                continue
+                        conn.execute("UPDATE tasks SET remind_time = ?, done = 0, notified_early = 0 WHERE id = ?", (next_time.isoformat(), id))
+                    else:
+                        kb = InlineKeyboardMarkup([
+                            [InlineKeyboardButton("✅ Завершить", callback_data=f"done_{id}")],
+                            [InlineKeyboardButton("❌ Удалить", callback_data=f"delete_{id}")]
+                        ])
+                        await app.bot.send_message(chat_id=user_id, text=f"🔔 Напоминание: {task}", reply_markup=kb)
+        await asyncio.sleep(30)
+
+async def main():
+    init_db()
+    app = ApplicationBuilder().token(TOKEN).build()
+    await app.bot.delete_webhook(drop_pending_updates=True)
+
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("start", start)],
+        states={
+            CHOOSE_ACTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_choice)],
+            ADD_TASK: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_task)],
+            CHOOSE_TZ: [CallbackQueryHandler(handle_tz_selection)]
+        },
+        fallbacks=[]
+    )
+
+    app.add_handler(conv_handler)
+    app.add_handler(CallbackQueryHandler(button_handler))
+    asyncio.create_task(notify_loop(app))
+    await app.run_polling()
+
+if __name__ == "__main__":
+    import asyncio
+    loop = asyncio.get_event_loop()
+    loop.create_task(main())
+    loop.run_forever()
