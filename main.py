@@ -7,14 +7,13 @@ from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
-    CallbackQueryHandler, ContextTypes, filters, ConversationHandler
+    CallbackQueryHandler, ContextTypes, filters
 )
 import asyncio
 
 nest_asyncio.apply()
 TOKEN = "7934879470:AAE9FIp5kHBLhoT5x27sucUdFIc_IgbdB9Q"
 DB_FILE = "tasks.db"
-CHOOSE_ACTION, ADD_TASK, CHOOSE_TZ = range(3)
 logging.basicConfig(level=logging.INFO)
 
 def init_db():
@@ -58,28 +57,21 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ["❓ Формат", "🌍 Установить часовой пояс"]
     ], resize_keyboard=True)
     await update.message.reply_text("Выберите действие:", reply_markup=keyboard)
-    return CHOOSE_ACTION
 
-async def handle_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     if text == "➕ Добавить задачу":
         await update.message.reply_text("✏️ Пример: Сдать отчёт в 18:00 21-05-2025 или Завтрак ежедневно в 08:00")
-        return ADD_TASK
     elif text == "📋 Список задач":
-        return await list_tasks(update, context)
+        await list_tasks(update, context)
     elif text == "📊 Статистика":
-        return await stats(update, context)
+        await stats(update, context)
     elif text == "❓ Формат":
         await update.message.reply_text("Примеры:\n– Сдать отчёт в 18:00\n– Завтрак ежедневно в 08:00\n– Встреча каждый понедельник в 10:00")
-        return CHOOSE_ACTION
     elif text == "🌍 Установить часовой пояс":
         zones = ["Asia/Bishkek", "Europe/Moscow", "Asia/Almaty", "Asia/Tashkent"]
         buttons = [[InlineKeyboardButton(z, callback_data=f"tz_{z}")] for z in zones]
         await update.message.reply_text("🌍 Выберите ваш часовой пояс:", reply_markup=InlineKeyboardMarkup(buttons))
-        return CHOOSE_TZ
-    else:
-        await update.message.reply_text("⚠️ Неизвестная команда.")
-        return CHOOSE_ACTION
 
 async def handle_tz_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -89,9 +81,10 @@ async def handle_tz_selection(update: Update, context: ContextTypes.DEFAULT_TYPE
     with sqlite3.connect(DB_FILE) as conn:
         conn.execute("UPDATE users SET tz = ? WHERE user_id = ?", (tz, user_id))
     await query.edit_message_text(f"✅ Часовой пояс установлен: {tz}")
-    return CHOOSE_ACTION
 
 async def add_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message:
+        return
     user_id = update.effective_user.id
     tz = get_user_timezone(user_id)
     now = datetime.now(tz)
@@ -99,8 +92,7 @@ async def add_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     match = re.match(r"^(.*?) в (\d{1,2}:\d{2})(?: (\d{2}-\d{2}-\d{4}))?$", text)
     if not match:
-        await update.message.reply_text("⚠️ Неверный формат. Пример: Сдать отчёт в 18:00 21-05-2025")
-        return ADD_TASK
+        return
 
     task = match.group(1).strip()
     time_str = match.group(2)
@@ -129,8 +121,7 @@ async def add_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
             day, month, year = map(int, date_str.split("-"))
             remind_date = datetime(year, month, day)
         except:
-            await update.message.reply_text("⚠️ Неверная дата. Формат: ДД-ММ-ГГГГ.")
-            return ADD_TASK
+            return
     else:
         remind_date = now
         if datetime.strptime(time_str, "%H:%M").time() <= now.time():
@@ -145,7 +136,6 @@ async def add_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.execute("INSERT INTO tasks (user_id, task, remind_time, repeat) VALUES (?, ?, ?, ?)",
                      (user_id, task, remind_time.isoformat(), repeat))
     await update.message.reply_text(f"✅ Задача добавлена: {task} — {remind_time.strftime('%d-%m-%Y %H:%M')}")
-    return await start(update, context)
 
 async def list_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -162,7 +152,6 @@ async def list_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
                  InlineKeyboardButton("❌ Удалить", callback_data=f"delete_{id}")]
             ])
             await update.message.reply_text(f"{task} — {rt.strftime('%d-%m-%Y %H:%M')}", reply_markup=kb)
-    return await start(update, context)
 
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -170,7 +159,6 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         total = conn.execute("SELECT COUNT(*) FROM tasks WHERE user_id = ?", (user_id,)).fetchone()[0]
         done = conn.execute("SELECT COUNT(*) FROM tasks WHERE user_id = ? AND done = 1", (user_id,)).fetchone()[0]
     await update.message.reply_text(f"📊 Выполнено: {done}, Всего: {total}, Активных: {total - done}")
-    return await start(update, context)
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -184,6 +172,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif action == "delete":
             conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
             await query.edit_message_text("❌ Задача удалена.")
+        elif action.startswith("tz_"):
+            await handle_tz_selection(update, context)
 
 async def notify_loop(app):
     while True:
@@ -214,22 +204,14 @@ async def main():
     app = ApplicationBuilder().token(TOKEN).build()
     await app.bot.delete_webhook(drop_pending_updates=True)
 
-    conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("start", start)],
-        states={
-            CHOOSE_ACTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_choice)],
-            ADD_TASK: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_task)],
-            CHOOSE_TZ: [CallbackQueryHandler(handle_tz_selection)]
-        },
-        fallbacks=[]
-    )
-
-    app.add_handler(conv_handler)
+    app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_buttons))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, add_task))
+
     asyncio.create_task(notify_loop(app))
     await app.run_polling()
 
 if __name__ == "__main__":
-    loop = asyncio.get_event_loop()
-    loop.create_task(main())
-    loop.run_forever()
+    asyncio.get_event_loop().create_task(main())
+    asyncio.get_event_loop().run_forever()
