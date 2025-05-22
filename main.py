@@ -3,7 +3,6 @@ import sqlite3
 import re
 import pytz
 import nest_asyncio
-import os
 from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
 from telegram.ext import (
@@ -231,7 +230,6 @@ async def main():
     await app.run_polling()
 
 if __name__ == "__main__":
-    import asyncio
     loop = asyncio.get_event_loop()
     loop.create_task(main())
     loop.run_forever()
