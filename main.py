@@ -4,7 +4,9 @@ import re
 import pytz
 import nest_asyncio
 from datetime import datetime, timedelta
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
+from telegram import (
+    Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
+)
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
     CallbackQueryHandler, ContextTypes, filters
@@ -16,6 +18,7 @@ TOKEN = "7934879470:AAE9FIp5kHBLhoT5x27sucUdFIc_IgbdB9Q"
 DB_FILE = "tasks.db"
 logging.basicConfig(level=logging.INFO)
 
+# Инициализация базы данных
 def init_db():
     with sqlite3.connect(DB_FILE) as conn:
         conn.execute("""
@@ -43,6 +46,7 @@ def get_user_timezone(user_id):
         row = conn.execute("SELECT tz FROM users WHERE user_id = ?", (user_id,)).fetchone()
         return pytz.timezone(row[0]) if row else pytz.utc
 
+# Команды
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     with sqlite3.connect(DB_FILE) as conn:
@@ -83,16 +87,14 @@ async def handle_tz_selection(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.edit_message_text(f"✅ Часовой пояс установлен: {tz}")
 
 async def add_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message:
-        return
+    if not update.message: return
     user_id = update.effective_user.id
     tz = get_user_timezone(user_id)
     now = datetime.now(tz)
     text = update.message.text.strip()
 
     match = re.match(r"^(.*?) в (\d{1,2}:\d{2})(?: (\d{2}-\d{2}-\d{4}))?$", text)
-    if not match:
-        return
+    if not match: return
 
     task = match.group(1).strip()
     time_str = match.group(2)
@@ -103,13 +105,13 @@ async def add_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
         repeat = "daily"
         task = task.replace("ежедневно", "").strip()
     else:
-        repeat_match = re.search(r"(каждый|каждую)\s+([а-я]+)", task.lower())
-        if repeat_match:
+        match = re.search(r"(каждый|каждую)\s+([а-я]+)", task.lower())
+        if match:
             weekdays = {
                 "понедельник": 0, "вторник": 1, "среда": 2,
                 "четверг": 3, "пятница": 4, "суббота": 5, "воскресенье": 6
             }
-            day = repeat_match.group(2)
+            day = match.group(2)
             if day in weekdays:
                 repeat = day
                 days_ahead = (weekdays[day] - now.weekday() + 7) % 7 or 7
@@ -118,8 +120,8 @@ async def add_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if date_str:
         try:
-            day, month, year = map(int, date_str.split("-"))
-            remind_date = datetime(year, month, day)
+            d, m, y = map(int, date_str.split("-"))
+            remind_date = datetime(y, m, d)
         except:
             return
     else:
@@ -186,11 +188,9 @@ async def notify_loop(app):
 
                 if done:
                     continue
-
                 if early == 0 and now + timedelta(minutes=30) >= rt > now:
                     conn.execute("UPDATE tasks SET notified_early = 1 WHERE id = ?", (id,))
                     await app.bot.send_message(chat_id=user_id, text=f"⏰ Через 30 минут: {task}")
-
                 if rt <= now:
                     kb = InlineKeyboardMarkup([
                         [InlineKeyboardButton("✅ Завершить", callback_data=f"done_{id}")],
